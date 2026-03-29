@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .sticky-note { transition: all 0.2s; user-select: none; }
+        .emergency-pulse { animation: pulse 1.5s infinite; border: 3px solid #ef4444; }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 font-sans text-gray-900">
+
+<div id="app" class="max-w-md mx-auto bg-white min-h-screen shadow-lg flex flex-col relative">
+    
+    <header class="bg-slate-800 text-white p-4 pt-10 sticky top-0 z-10">
+        <h1 class="text-center font-bold mb-3">医療用付箋ボード</h1>
+        <div class="flex overflow-x-auto space-x-2 no-scrollbar">
+            <button v-for="dept in departments" :key="dept.id"
+                @click="currentDeptId = dept.id"
+                :class="['px-4 py-1 rounded-full text-sm whitespace-nowrap', 
+                        currentDeptId === dept.id ? 'bg-white text-slate-800 font-bold' : 'bg-slate-700 text-slate-300']">
+                {{ dept.name }}
+            </button>
+        </div>
+    </header>
+
+    <main class="flex-1 p-4 grid grid-cols-2 gap-3">
+        <div v-for="note in filteredNotes" :key="note.id" 
+             @touchstart="handleLongPress(note)" @mousedown="handleLongPress(note)"
+             :class="['sticky-note p-3 rounded-xl shadow h-36 flex flex-col relative', 
+                     note.category.color, note.category.id === 'emergency' ? 'emergency-pulse' : '']"
+             :style="{ opacity: note.isCompleted ? 0.4 : 1 }">
+            
+            <div class="absolute top-2 right-2">
+                <img :src="getDoctorImage(note.doctorId)" class="w-8 h-8 rounded-full border border-white bg-gray-200 object-cover">
+            </div>
+
+            <span class="text-[10px] font-bold bg-black/10 px-1 rounded w-fit">{{ note.category.name }}</span>
+            <p class="text-xs mt-2 font-bold">{{ note.content }}</p>
+            
+            <div class="mt-auto flex justify-between items-center text-[9px] text-black/40">
+                <span>{{ formatDate(note.createdAt) }}</span>
+                <span v-if="note.isCompleted" class="bg-green-600 text-white px-1 rounded">完了</span>
+            </div>
+        </div>
+    </main>
+
+    <div class="fixed bottom-6 right-6 flex flex-col space-y-4">
+        <button @click="openAdmin" class="w-12 h-12 bg-slate-500 text-white rounded-full shadow-lg flex items-center justify-center text-xl">⚙️</button>
+        <button @click="showPostModal = true" class="w-14 h-14 bg-blue-600 text-white rounded-full shadow-xl flex items-center justify-center text-3xl">+</button>
+    </div>
+
+    <div v-if="showPostModal" class="fixed inset-0 bg-black/60 flex items-end z-30">
+        <div class="bg-white w-full rounded-t-3xl p-6 h-[80vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="font-bold">新規投稿</h2>
+                <button @click="showPostModal = false" class="text-2xl text-gray-400">&times;</button>
+            </div>
+
+            <div class="space-y-6">
+                <div>
+                    <label class="text-xs text-gray-500 block mb-2">種別</label>
+                    <div class="flex flex-wrap gap-2">
+                        <button v-for="cat in categories" @click="newNote.category = cat"
+                            :class="['px-3 py-1 rounded-lg text-xs transition', newNote.category.id === cat.id ? 'ring-2 ring-blue-600 font-bold' : '', cat.color]">
+                            {{ cat.name }}
+                        </button>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="text-xs text-gray-500 block mb-2">宛先医師 (部門を選択して探す)</label>
+                    <select v-model="filterDocDept" class="w-full text-sm border p-2 rounded-lg mb-2">
+                        <option :value="null">すべての部門</option>
+                        <option v-for="d in departments" :value="d.id">{{ d.name }}</option>
+                    </select>
+                    <div class="flex space-x-3 overflow-x-auto py-2 no-scrollbar">
+                        <div v-for="doc in filteredDoctors" @click="newNote.doctorId = doc.id"
+                            :class="['flex-shrink-0 text-center w-16 transition', newNote.doctorId === doc.id ? 'scale-110' : 'opacity-50']">
+                            <img :src="doc.img" class="w-12 h-12 rounded-full mx-auto object-cover border-2" :class="newNote.doctorId === doc.id ? 'border-blue-500' : 'border-transparent'">
+                            <span class="text-[9px] mt-1 block truncate">{{ doc.name }}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <textarea v-model="newNote.content" placeholder="具体的な指示・連絡内容を入力" class="w-full border rounded-xl p-3 h-24 bg-gray-50 text-sm"></textarea>
+                
+                <button @click="saveNote" class="w-full bg-blue-600 text-white py-4 rounded-xl font-bold">投稿する</button>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="showAdminModal" class="fixed inset-0 bg-slate-900 flex items-center justify-center z-40 p-4">
+        <div class="bg-white w-full max-w-sm rounded-2xl p-6 shadow-2xl">
+            <h2 class="font-bold text-center mb-4">管理者設定</h2>
+            
+            <div v-if="!isAdminAuthenticated">
+                <input v-model="adminPass" type="password" placeholder="パスワードを入力 (1234)" class="w-full border p-3 rounded-xl mb-4 text-center">
+                <div class="flex space-x-2">
+                    <button @click="showAdminModal = false" class="flex-1 py-2 text-gray-500">閉じる</button>
+                    <button @click="checkPass" class="flex-1 bg-slate-800 text-white py-2 rounded-xl">認証</button>
+                </div>
+            </div>
+
+            <div v-else class="space-y-6 h-[70vh] overflow-y-auto pr-2">
+                <section>
+                    <h3 class="text-sm font-bold border-b pb-1 mb-2">部門の管理</h3>
+                    <div v-for="dept in departments" class="flex justify-between items-center text-sm mb-1">
+                        <span>{{ dept.name }}</span>
+                        <button @click="deleteDept(dept.id)" class="text-red-500 text-xs">削除</button>
+                    </div>
+                    <div class="flex mt-2">
+                        <input v-model="newDeptName" placeholder="新部門名" class="flex-1 border-y border-l px-2 py-1 text-sm rounded-l">
+                        <button @click="addDept" class="bg-slate-800 text-white px-3 rounded-r text-sm">追加</button>
+                    </div>
+                </section>
+
+                <section>
+                    <h3 class="text-sm font-bold border-b pb-1 mb-2">医師の登録</h3>
+                    <div class="space-y-2">
+                        <select v-model="newDocDept" class="w-full border p-2 text-sm rounded">
+                            <option v-for="d in departments" :value="d.id">{{ d.name }}</option>
+                        </select>
+                        <input v-model="newDocName" placeholder="医師名" class="w-full border p-2 text-sm rounded">
+                        <button @click="addDoc" class="w-full bg-blue-600 text-white py-2 rounded text-sm">医師を追加</button>
+                    </div>
+                    <div class="mt-4 space-y-2">
+                        <div v-for="doc in doctors" class="flex items-center space-x-2 text-xs border-b py-1">
+                            <img :src="doc.img" class="w-6 h-6 rounded-full">
+                            <span class="flex-1">{{ doc.name }} ({{ getDeptName(doc.deptId) }})</span>
+                            <button @click="deleteDoc(doc.id)" class="text-red-500">消去</button>
+                        </div>
+                    </div>
+                </section>
+                <button @click="isAdminAuthenticated = false; showAdminModal = false" class="w-full py-3 text-gray-400 text-sm">ログアウト</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const { createApp, ref, computed } = Vue;
+
+createApp({
+    setup() {
+        const currentDeptId = ref(1);
+        const showPostModal = ref(false);
+        const showAdminModal = ref(false);
+        const isAdminAuthenticated = ref(false);
+        const adminPass = ref("");
+        const filterDocDept = ref(null);
+
+        const departments = ref([
+            { id: 1, name: "総合連絡" },
+            { id: 2, name: "外科" },
+            { id: 3, name: "消化器内科" }
+        ]);
+
+        const doctors = ref([
+            { id: 1, name: "立花 医師", deptId: 2, img: "https://i.pravatar.cc/150?u=10" },
+            { id: 2, name: "佐藤 医師", deptId: 3, img: "https://i.pravatar.cc/150?u=20" }
+        ]);
+
+        const categories = [
+            { id: 'order', name: 'オーダー依頼', color: 'bg-blue-100' },
+            { id: 'instruction', name: '指示確認', color: 'bg-green-100' },
+            { id: 'patient', name: '患者対応', color: 'bg-yellow-100' },
+            { id: 'emergency', name: '至急対応', color: 'bg-red-100' }
+        ];
+
+        const notes = ref([]);
+        const newNote = ref({ category: categories[0], content: "", doctorId: 1 });
+
+        const newDeptName = ref("");
+        const newDocName = ref("");
+        const newDocDept = ref(1);
+
+        const filteredNotes = computed(() => notes.value.filter(n => n.departmentId === currentDeptId.value && !n.isDeleted));
+        const filteredDoctors = computed(() => filterDocDept.value ? doctors.value.filter(d => d.deptId === filterDocDept.value) : doctors.value);
+
+        const checkPass = () => { if(adminPass.value === "1234") isAdminAuthenticated.value = true; else alert("パスワードが違います"); };
+        const openAdmin = () => { showAdminModal.value = true; adminPass.value = ""; };
+
+        const addDept = () => { if(newDeptName.value) { departments.value.push({ id: Date.now(), name: newDeptName.value }); newDeptName.value = ""; } };
+        const deleteDept = (id) => { departments.value = departments.value.filter(d => d.id !== id); };
+
+        const addDoc = () => { 
+            if(newDocName.value) { 
+                doctors.value.push({ id: Date.now(), name: newDocName.value, deptId: newDocDept.value, img: `https://i.pravatar.cc/150?u=${Date.now()}` }); 
+                newDocName.value = ""; 
+            } 
+        };
+        const deleteDoc = (id) => { doctors.value = doctors.value.filter(d => d.id !== id); };
+
+        const saveNote = () => {
+            notes.value.unshift({ ...newNote.value, id: Date.now(), departmentId: currentDeptId.value, createdAt: new Date(), isCompleted: false, isDeleted: false });
+            showPostModal.value = false;
+            newNote.value.content = "";
+        };
+
+        const handleLongPress = (note) => {
+            const timer = setTimeout(() => {
+                if(confirm("この付箋を完了にしますか？")) note.isCompleted = true;
+            }, 800);
+            const clear = () => clearTimeout(timer);
+            window.addEventListener('mouseup', clear, {once:true});
+            window.addEventListener('touchend', clear, {once:true});
+        };
+
+        return { 
+            currentDeptId, departments, doctors, notes, filteredNotes, showPostModal, categories, newNote, saveNote, 
+            getDoctorImage: (id) => doctors.value.find(d => d.id === id)?.img,
+            getDeptName: (id) => departments.value.find(d => d.id === id)?.name,
+            formatDate: (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            showAdminModal, isAdminAuthenticated, adminPass, checkPass, openAdmin,
+            newDeptName, addDept, deleteDept, newDocName, newDocDept, addDoc, deleteDoc,
+            filterDocDept, filteredDoctors, handleLongPress
+        };
+    }
+}).mount('#app');
+</script>
+</body>
+</html>
